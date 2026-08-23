@@ -1,0 +1,21 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Visit Tracker</title>
+</head>
+<body>
+  <h1>Site Visit Tracker</h1>
+  <p>Visit count: <strong id="count">--</strong></p>
+  <p>Database date/time: <strong id="dbdt">--</strong></p>
+  <script>
+    fetch('/api/stats/')
+      .then(r => r.json())
+      .then(data => {
+        document.getElementById('count').textContent = data.visit_count;
+        document.getElementById('dbdt').textContent = data.database_datetime;
+      });
+  </script>
+</body>
+</html>
