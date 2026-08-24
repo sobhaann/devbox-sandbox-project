@@ -1,25 +1,119 @@
+x-patroni-node: &patroni_node
+  build: ./patroni
+  environment: &patroni_env
+    PATRONI_SCOPE: postgres-cluster
+    PATRONI_ETCD3_HOSTS: etcd:2379
+    PATRONI_RESTAPI_LISTEN: 0.0.0.0:8008
+    PATRONI_POSTGRESQL_LISTEN: 0.0.0.0:5432
+    PATRONI_POSTGRESQL_DATA_DIR: /var/lib/postgresql/data/pgdata
+    PATRONI_SUPERUSER_USERNAME: ${PATRONI_SUPERUSER_USERNAME:-postgres}
+    PATRONI_SUPERUSER_PASSWORD: ${PATRONI_SUPERUSER_PASSWORD}
+    PATRONI_REPLICATION_USERNAME: ${PATRONI_REPLICATION_USERNAME:-replicator}
+    PATRONI_REPLICATION_PASSWORD: ${PATRONI_REPLICATION_PASSWORD}
+    APP_DB_USER: ${POSTGRES_USER:-django_user}
+    APP_DB_PASSWORD: ${POSTGRES_PASSWORD}
+    APP_DB_NAME: ${POSTGRES_DB:-django_db}
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:8008/liveness"]
+    interval: 5s
+    timeout: 5s
+    retries: 10
+  depends_on:
+    etcd:
+      condition: service_healthy
+
 services:
-  db:
-    image: postgres:16-alpine
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.21
+    command:
+      - etcd
+      - --name=etcd0
+      - --data-dir=/etcd-data
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://etcd:2379
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --initial-advertise-peer-urls=http://etcd:2380
+      - --initial-cluster=etcd0=http://etcd:2380
+      - --initial-cluster-state=new
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-    env_file:
-      - .env
+      - etcd_data:/etcd-data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-django_user} -d ${POSTGRES_DB:-django_db}"]
+      test: ["CMD", "etcdctl", "--endpoints=http://localhost:2379", "endpoint", "health"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
+
+  postgres1:
+    <<: *patroni_node
+    hostname: postgres1
+    environment:
+      <<: *patroni_env
+      PATRONI_NAME: postgres1
+      PATRONI_RESTAPI_CONNECT_ADDRESS: postgres1:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: postgres1:5432
+    volumes:
+      - postgres1_data:/var/lib/postgresql/data
+
+  postgres2:
+    <<: *patroni_node
+    hostname: postgres2
+    environment:
+      <<: *patroni_env
+      PATRONI_NAME: postgres2
+      PATRONI_RESTAPI_CONNECT_ADDRESS: postgres2:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: postgres2:5432
+    volumes:
+      - postgres2_data:/var/lib/postgresql/data
+
+  postgres3:
+    <<: *patroni_node
+    hostname: postgres3
+    environment:
+      <<: *patroni_env
+      PATRONI_NAME: postgres3
+      PATRONI_RESTAPI_CONNECT_ADDRESS: postgres3:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: postgres3:5432
+    volumes:
+      - postgres3_data:/var/lib/postgresql/data
+
+  haproxy:
+    image: haproxy:2.9-alpine
+    volumes:
+      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports:
+      - "5000:5000"   # Django connects here (always routed to the primary)
+      - "7000:7000"   # stats page: http://localhost:7000/
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:7000/"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    depends_on:
+      - postgres1
+      - postgres2
+      - postgres3
 
   web:
     build: .
     env_file:
       - .env
     depends_on:
-      db:
+      haproxy:
         condition: service_healthy
+      db_init:
+        condition: service_completed_successfully
     volumes:
       - .:/app
+
+  db_init:
+    build: .
+    env_file:
+      - .env
+    depends_on:
+      haproxy:
+        condition: service_healthy
+    entrypoint: ["python", "manage.py", "migrate"]
+    restart: "no"
 
   frontend:
     build: ./frontend
@@ -44,7 +138,7 @@ services:
         condition: service_completed_successfully
       web:
         condition: service_started
-  
+
   certbot:
     image: certbot/certbot
     volumes:
@@ -52,7 +146,10 @@ services:
       - certbot_certs:/etc/letsencrypt
 
 volumes:
-  postgres_data:
+  etcd_data:
+  postgres1_data:
+  postgres2_data:
+  postgres3_data:
   frontend_build:
   certbot_www:
   certbot_certs:
