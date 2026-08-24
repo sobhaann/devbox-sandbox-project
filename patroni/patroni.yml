@@ -1,0 +1,45 @@
+# Static, cluster-wide settings. Everything that differs per node
+# (name, addresses, credentials) is injected via PATRONI_* env vars
+# in docker-compose.yml — see Patroni's ENVIRONMENT.rst.
+
+bootstrap:
+  dcs:
+    ttl: 30
+    loop_wait: 10
+    retry_timeout: 10
+    maximum_lag_on_failover: 1048576
+    synchronous_mode: false
+    slots:
+      postgres2:
+        type: physical
+      postgres3:
+        type: physical
+    postgresql:
+      use_pg_rewind: true
+      parameters:
+        wal_level: replica
+        hot_standby: "on"
+        wal_keep_size: "128MB"
+        max_wal_senders: 10
+        max_replication_slots: 10
+    slots:
+      postgres2:
+        type: physical
+      postgres3:
+        type: physical
+
+  # Runs once, only on the node that performs the very first initdb,
+  # to create the actual application database + user Django will use.
+  post_bootstrap: /scripts/post_bootstrap.sh
+
+  initdb:
+    - encoding: UTF8
+    - data-checksums
+
+  pg_hba:
+    - host replication replicator 0.0.0.0/0 md5
+    - host all all 0.0.0.0/0 md5
+
+postgresql:
+  parameters:
+    unix_socket_directories: '/var/run/postgresql'
