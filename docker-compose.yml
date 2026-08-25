@@ -203,7 +203,9 @@ services:
       frontend:
         condition: service_completed_successfully
       web:
-        condition: service_started
+        condition: service_started  
+    networks:
+      - edge
 
   certbot:
     image: certbot/certbot
