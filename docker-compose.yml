@@ -221,3 +221,7 @@ volumes:
   frontend_build:
   certbot_www:
   certbot_certs:
+
+networks:
+  edge:
+    external: true
